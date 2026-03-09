@@ -12,8 +12,15 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: googleapis/release-please-action@v4
+      - id: release
+        uses: googleapis/release-please-action@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           release-type: python
           extra-files: pyproject.toml
+
+      - name: Auto-merge release PR
+        if: ${{ steps.release.outputs.pr && !steps.release.outputs.release_created }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr merge ${{ fromJSON(steps.release.outputs.pr).number }} --squash --admin --repo ${{ github.repository }}
