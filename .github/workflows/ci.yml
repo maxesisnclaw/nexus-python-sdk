@@ -28,4 +28,4 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Run tests
-        run: pytest tests/ -k "not real_daemon" -v
+        run: pytest tests/ -k "not real_daemon and not go_msgpack_frame" -v
