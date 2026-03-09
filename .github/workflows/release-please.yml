@@ -24,3 +24,24 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh pr merge ${{ fromJSON(steps.release.outputs.pr).number }} --squash --admin --repo ${{ github.repository }}
+
+      # Publish to PyPI when a release is created
+      - name: Checkout
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build and publish to PyPI
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          pip install build twine
+          python -m build
+          twine upload dist/*
