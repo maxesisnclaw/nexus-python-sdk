@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1](https://github.com/maxesisnclaw/nexus-python-sdk/compare/v0.5.0...v0.5.1) (2026-03-09)
+
+
+### Bug Fixes
+
+* **ci:** trigger release on GitHub release published event ([e411ac2](https://github.com/maxesisnclaw/nexus-python-sdk/commit/e411ac20da35694660af8357e52af024d188c07b))
+
 ## [0.5.0](https://github.com/maxesisnclaw/nexus-python-sdk/compare/v0.4.0...v0.5.0) (2026-03-09)
 
 
