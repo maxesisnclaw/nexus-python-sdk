@@ -495,6 +495,14 @@ class Node:
         return instances[idx]
 
     def _pick_endpoint(self, instance: dict[str, object]) -> tuple[str, bool]:
+        """Select transport for an instance.
+
+        UDS path reachability (a stat'able socket file) is the source of truth.
+        This correctly handles container deployments where caller and callee
+        share a UDS via a bind mount / named volume but have different
+        hostnames (and would otherwise look "remote" by node-id comparison).
+        TCP is used only when UDS is not reachable in this namespace.
+        """
         endpoints = instance.get("endpoints")
         if not isinstance(endpoints, list):
             raise RuntimeError("instance has no endpoints")
@@ -513,54 +521,32 @@ class Node:
             if kind == "tcp":
                 tcp_addr = addr
 
-        instance_node = instance.get("node", "")
-        if isinstance(instance_node, bytes):
-            try:
-                instance_node = instance_node.decode()
-            except UnicodeDecodeError:
-                instance_node = ""
-        if not isinstance(instance_node, str):
-            instance_node = ""
-        is_local_instance = bool(instance_node) and instance_node == self._local_node_id
-        is_remote_instance = bool(instance_node) and instance_node != self._local_node_id
-
-        if is_local_instance:
-            if uds_addr:
-                return uds_addr, False
-            if tcp_addr:
-                return tcp_addr, True
-        elif is_remote_instance:
-            if tcp_addr:
-                return tcp_addr, True
-            if uds_addr:
-                instance_id = instance.get("id", "")
-                if isinstance(instance_id, bytes):
-                    try:
-                        instance_id = instance_id.decode()
-                    except UnicodeDecodeError:
-                        instance_id = ""
-                if not isinstance(instance_id, str):
+        if uds_addr and self._is_uds_reachable(uds_addr):
+            return uds_addr, False
+        if tcp_addr:
+            return tcp_addr, True
+        if uds_addr:
+            instance_id = instance.get("id", "")
+            if isinstance(instance_id, bytes):
+                try:
+                    instance_id = instance_id.decode()
+                except UnicodeDecodeError:
                     instance_id = ""
-                raise ConnectionError(
-                    f"remote instance {instance_id} has no TCP endpoint; refusing UDS fallback for non-local target"
-                )
-        else:
-            if tcp_addr:
-                return tcp_addr, True
-            if uds_addr:
-                instance_id = instance.get("id", "")
-                if isinstance(instance_id, bytes):
-                    try:
-                        instance_id = instance_id.decode()
-                    except UnicodeDecodeError:
-                        instance_id = ""
-                if not isinstance(instance_id, str):
-                    instance_id = ""
-                raise ConnectionError(
-                    f"instance {instance_id} has unknown node identity and no TCP endpoint; "
-                    "refusing UDS fallback for non-local target"
-                )
+            if not isinstance(instance_id, str):
+                instance_id = ""
+            raise ConnectionError(
+                f"instance {instance_id}: UDS {uds_addr} not reachable in this "
+                "namespace and no TCP fallback"
+            )
         raise RuntimeError("instance has no usable endpoints")
+
+    @staticmethod
+    def _is_uds_reachable(path: str) -> bool:
+        try:
+            st = os.stat(path)
+        except OSError:
+            return False
+        return stat.S_ISSOCK(st.st_mode)
 
     @staticmethod
     def _create_uds_listener(path: str) -> socket.socket:

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import shutil
 import socket
+import tempfile
 import time
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -411,64 +414,78 @@ def test_call_timeout_retries_and_raises_descriptive_error(monkeypatch: Any, reg
         node.close()
 
 
-def test_pick_endpoint_prefers_local_uds_and_remote_tcp(registry_socket_path: str) -> None:
+def test_pick_endpoint_uses_uds_when_reachable_regardless_of_node_id(
+    registry_socket_path: str, tmp_path: Path
+) -> None:
+    """UDS file reachability is the source of truth — not hostname equality.
+
+    In container-orchestrated deployments (docker compose, k8s with hostPath
+    volumes, etc.) caller and callee usually share a UDS via a named volume
+    while running with different hostnames. Selecting transport by hostname
+    equality would force these calls onto TCP even though UDS is physically
+    reachable. We assert here that a stat'able socket file is preferred no
+    matter what `node` field the registry reports.
+    """
     node = Node(name="caller", id="caller-pick", registry_addr=registry_socket_path)
     try:
-        local_instance = {
-            "node": node._local_node_id,
-            "endpoints": [
-                {"type": "tcp", "addr": "127.0.0.1:9000"},
-                {"type": "uds", "addr": "/tmp/local.sock"},
-            ],
-        }
-        remote_instance = {
-            "node": "remote-node",
-            "endpoints": [
-                {"type": "uds", "addr": "/tmp/remote.sock"},
-                {"type": "tcp", "addr": "127.0.0.1:9001"},
-            ],
-        }
-        unknown_instance = {
-            "endpoints": [
-                {"type": "uds", "addr": "/tmp/unknown.sock"},
-                {"type": "tcp", "addr": "127.0.0.1:9002"},
-            ],
-        }
-        remote_only_uds_instance = {
-            "id": "remote-only-1",
-            "node": "remote-node",
-            "endpoints": [{"type": "uds", "addr": "/tmp/remote-only.sock"}],
-        }
-        unknown_only_uds_instance = {
-            "id": "unknown-only-1",
-            "endpoints": [{"type": "uds", "addr": "/tmp/unknown-only.sock"}],
-        }
+        # Create a real listening UDS so it appears as a ModeSocket on stat.
+        # Use /tmp directly to stay within macOS sun_path 104-byte limit.
+        sock_dir = Path(tempfile.mkdtemp(prefix="nexus-pick-", dir="/tmp"))
+        try:
+            real_sock = sock_dir / "svc.sock"
+            srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            srv.bind(str(real_sock))
+            srv.listen(1)
+            try:
+                # 1) caller and callee on same host -> UDS picked
+                local_uds_only = {
+                    "node": node._local_node_id,
+                    "endpoints": [{"type": "uds", "addr": str(real_sock)}],
+                }
+                addr, use_tcp = node._pick_endpoint(local_uds_only)
+                assert addr == str(real_sock) and use_tcp is False
 
-        local_addr, local_use_tcp = node._pick_endpoint(local_instance)
-        remote_addr, remote_use_tcp = node._pick_endpoint(remote_instance)
-        unknown_addr, unknown_use_tcp = node._pick_endpoint(unknown_instance)
-        with pytest.raises(
-            ConnectionError,
-            match=(
-                "remote instance remote-only-1 has no TCP endpoint; refusing UDS fallback for non-local target"
-            ),
-        ):
-            node._pick_endpoint(remote_only_uds_instance)
-        with pytest.raises(
-            ConnectionError,
-            match=(
-                "instance unknown-only-1 has unknown node identity and no TCP endpoint; "
-                "refusing UDS fallback for non-local target"
-            ),
-        ):
-            node._pick_endpoint(unknown_only_uds_instance)
+                # 2) callee reports a different hostname (different container)
+                #    but UDS is on a shared volume and physically reachable.
+                #    Must still pick UDS.
+                cross_host_uds = {
+                    "node": "other-container",
+                    "endpoints": [
+                        {"type": "tcp", "addr": "127.0.0.1:9001"},
+                        {"type": "uds", "addr": str(real_sock)},
+                    ],
+                }
+                addr, use_tcp = node._pick_endpoint(cross_host_uds)
+                assert addr == str(real_sock) and use_tcp is False, (
+                    "cross-namespace caller must still use UDS when the socket "
+                    "file is reachable"
+                )
 
-        assert local_addr == "/tmp/local.sock"
-        assert local_use_tcp is False
-        assert remote_addr == "127.0.0.1:9001"
-        assert remote_use_tcp is True
-        assert unknown_addr == "127.0.0.1:9002"
-        assert unknown_use_tcp is True
+                # 3) UDS path that doesn't exist + TCP available -> TCP fallback
+                uds_missing = {
+                    "node": "other-container",
+                    "endpoints": [
+                        {"type": "uds", "addr": str(sock_dir / "missing.sock")},
+                        {"type": "tcp", "addr": "127.0.0.1:9002"},
+                    ],
+                }
+                addr, use_tcp = node._pick_endpoint(uds_missing)
+                assert addr == "127.0.0.1:9002" and use_tcp is True
+
+                # 4) UDS missing AND no TCP -> explanatory error
+                only_unreachable_uds = {
+                    "id": "lonely-1",
+                    "node": "other-container",
+                    "endpoints": [
+                        {"type": "uds", "addr": str(sock_dir / "gone.sock")},
+                    ],
+                }
+                with pytest.raises(ConnectionError, match="not reachable"):
+                    node._pick_endpoint(only_unreachable_uds)
+            finally:
+                srv.close()
+        finally:
+            shutil.rmtree(sock_dir, ignore_errors=True)
     finally:
         node.close()
 
