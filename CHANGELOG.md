@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.2](https://github.com/maxesisnclaw/nexus-python-sdk/compare/v0.5.1...v0.5.2) (2026-05-13)
+
+
+### Bug Fixes
+
+* **node:** select UDS by socket reachability, not hostname equality ([5b266ab](https://github.com/maxesisnclaw/nexus-python-sdk/commit/5b266ab98ee9a43c20edadcfeca89eb49983629d))
+
 ## [0.5.1](https://github.com/maxesisnclaw/nexus-python-sdk/compare/v0.5.0...v0.5.1) (2026-03-09)
 
 
