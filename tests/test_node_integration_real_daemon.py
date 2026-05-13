@@ -119,7 +119,7 @@ def _build_go_call_helper(work_dir: Path) -> Path:
                 "os"
                 "time"
 
-                "github.com/maxesisn/nexus/pkg/sdk"
+                "github.com/maxesisnclaw/nexus/pkg/sdk"
             )
 
             func main() {
