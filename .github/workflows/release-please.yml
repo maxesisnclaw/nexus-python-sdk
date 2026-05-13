@@ -19,8 +19,12 @@ jobs:
           release-type: python
           extra-files: pyproject.toml
 
+      # Auto-merge any release PR that release-please created or updated in
+      # this run. The previous `!release_created` guard introduced a race:
+      # when one run simultaneously tagged the prior release PR AND opened a
+      # new one, release_created was true and the new PR was left dangling.
       - name: Auto-merge release PR
-        if: ${{ steps.release.outputs.pr && !steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs.pr }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh pr merge ${{ fromJSON(steps.release.outputs.pr).number }} --squash --admin --repo ${{ github.repository }}
